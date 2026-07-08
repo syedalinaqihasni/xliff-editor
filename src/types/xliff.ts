@@ -53,3 +53,16 @@ export interface TranslationMemory {
   context?: string;
   createdAt: string;
 }
+
+// Translation file format types
+export type TranslationFileFormat = 'xliff' | 'xliff2' | 'po' | 'pot' | 'mo';
+
+export interface TranslationFile {
+  format: TranslationFileFormat;
+  name: string;
+  sourceLanguage: string;
+  targetLanguage: string;
+  units: TranslationUnit[];
+  header?: Record<string, string>;
+  metadata?: Record<string, unknown>;
+}

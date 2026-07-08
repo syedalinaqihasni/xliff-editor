@@ -13,6 +13,7 @@ export interface Database {
         Row: {
           id: string;
           name: string;
+          format: string;
           source_language: string;
           target_language: string;
           content: Json;
@@ -24,6 +25,7 @@ export interface Database {
         Insert: {
           id?: string;
           name: string;
+          format?: string;
           source_language: string;
           target_language: string;
           content: Json;
@@ -35,6 +37,7 @@ export interface Database {
         Update: {
           id?: string;
           name?: string;
+          format?: string;
           source_language?: string;
           target_language?: string;
           content?: Json;

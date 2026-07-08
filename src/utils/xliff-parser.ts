@@ -1,4 +1,6 @@
-import { XliffDocument, XliffFile, TranslationUnit } from '@/types/xliff';
+import type { XliffDocument, XliffFile, TranslationUnit } from '@/types/xliff';
+
+export type { XliffDocument, XliffFile, TranslationUnit };
 
 export function parseXliff(content: string): XliffDocument {
   const parser = new DOMParser();
