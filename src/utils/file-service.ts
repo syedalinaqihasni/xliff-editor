@@ -1,10 +1,16 @@
 import { supabase } from '@/lib/supabase';
-import { XliffDocument, TranslationUnit } from '@/types/xliff';
-import { serializeXliff, calculateProgress } from '@/utils/xliff-parser';
+import type { TranslationFile, TranslationFileFormat, TranslationUnit } from '@/types/xliff';
+import {
+  parseTranslationFile,
+  serializeTranslationFile,
+  detectFormat,
+  getFormatExtension,
+} from './translation-converter';
 
 interface XliffFileRow {
   id: string;
   name: string;
+  format: string;
   source_language: string;
   target_language: string;
   content: Record<string, unknown>;
@@ -40,21 +46,23 @@ interface TranslationMemoryRow {
   updated_at: string;
 }
 
-export async function saveXliffFile(
-  name: string,
-  document: XliffDocument
+export async function saveTranslationFile(
+  file: TranslationFile
 ): Promise<XliffFileRow> {
-  const progress = calculateProgress(document.files);
+  const translatedCount = file.units.filter(
+    u => u.target && u.target.trim() && u.state !== 'new'
+  ).length;
 
   const { data, error } = await supabase
     .from('xliff_files')
     .insert({
-      name,
-      source_language: document.srcLang,
-      target_language: document.trgLang,
-      content: document as unknown as Record<string, unknown>,
-      unit_count: progress.total,
-      translated_count: progress.translated,
+      name: file.name,
+      format: file.format,
+      source_language: file.sourceLanguage,
+      target_language: file.targetLanguage,
+      content: file as unknown as Record<string, unknown>,
+      unit_count: file.units.length,
+      translated_count: translatedCount,
     } as never)
     .select()
     .single();
@@ -66,19 +74,17 @@ export async function saveXliffFile(
 
   // Insert translation units
   const units: never[] = [];
-  document.files.forEach((file) => {
-    file.translationUnits.forEach((unit) => {
-      units.push({
-        xliff_file_id: fileId,
-        unit_id: unit.id,
-        resname: unit.resname || null,
-        source: unit.source,
-        target: unit.target || null,
-        state: unit.state || 'new',
-        note: unit.note || null,
-        approved: unit.approved || false,
-      } as never);
-    });
+  file.units.forEach((unit, index) => {
+    units.push({
+      xliff_file_id: fileId,
+      unit_id: unit.id || `unit-${index + 1}`,
+      resname: unit.resname || null,
+      source: unit.source,
+      target: unit.target || null,
+      state: unit.state || 'new',
+      note: unit.note || null,
+      approved: unit.approved || false,
+    } as never);
   });
 
   if (units.length > 0) {
@@ -140,7 +146,6 @@ export async function updateTranslationUnit(
   if (error) throw error;
   if (!data) throw new Error('Failed to update translation unit');
 
-  // Update file progress
   await updateFileProgress((data as TranslationUnitRow).xliff_file_id);
 
   return data as TranslationUnitRow;
@@ -179,37 +184,53 @@ export async function deleteXliffFile(id: string): Promise<void> {
   if (error) throw error;
 }
 
-export async function exportXliffFile(id: string): Promise<string> {
+// Export helpers
+export async function exportFile(
+  id: string,
+  format?: TranslationFileFormat
+): Promise<{ content: string | ArrayBuffer; filename: string; format: string }> {
   const file = await getXliffFile(id);
   if (!file) throw new Error('File not found');
 
   const units = await getTranslationUnits(id);
+  const exportFormat = format || (file.format as TranslationFileFormat) || 'xliff';
 
-  const document: XliffDocument = {
-    version: '2.0',
-    srcLang: file.source_language,
-    trgLang: file.target_language,
-    files: [
-      {
-        id: 'f1',
-        original: file.name,
-        sourceLanguage: file.source_language,
-        targetLanguage: file.target_language,
-        datatype: 'plaintext',
-        translationUnits: units.map((u) => ({
-          id: u.unit_id,
-          resname: u.resname || undefined,
-          source: u.source,
-          target: u.target || undefined,
-          state: u.state as TranslationUnit['state'],
-          note: u.note || undefined,
-          approved: u.approved,
-        })),
-      },
-    ],
+  const translationFile: TranslationFile = {
+    format: exportFormat,
+    name: file.name,
+    sourceLanguage: file.source_language,
+    targetLanguage: file.target_language,
+    units: units.map((u) => ({
+      id: u.unit_id,
+      resname: u.resname || undefined,
+      source: u.source,
+      target: u.target || undefined,
+      state: u.state as TranslationUnit['state'],
+      note: u.note || undefined,
+      approved: u.approved,
+    })),
   };
 
-  return serializeXliff(document);
+  const content = serializeTranslationFile(translationFile, exportFormat);
+  const extension = getFormatExtension(exportFormat);
+  const filename = `${file.name}${extension}`;
+
+  return { content, filename, format: exportFormat };
+}
+
+export async function exportXliffFile(id: string): Promise<string> {
+  const { content } = await exportFile(id, 'xliff');
+  return content as string;
+}
+
+export async function exportPoFile(id: string): Promise<string> {
+  const { content } = await exportFile(id, 'po');
+  return content as string;
+}
+
+export async function exportMoFile(id: string): Promise<ArrayBuffer> {
+  const { content } = await exportFile(id, 'mo');
+  return content as ArrayBuffer;
 }
 
 export async function searchTranslationMemory(
@@ -235,7 +256,6 @@ export async function addToTranslationMemory(
   source: string,
   target: string
 ): Promise<void> {
-  // Check if exists
   const { data: existing } = await supabase
     .from('translation_memory')
     .select('id, usage_count')
@@ -264,15 +284,15 @@ export async function addToTranslationMemory(
   }
 }
 
-import { parseXliff } from './xliff-parser';
-
-export function parseXliffFile(content: string, filename: string): {
-  name: string;
-  document: XliffDocument;
-} {
-  const document = parseXliff(content);
+// Legacy compatibility
+export const saveXliffFile = saveTranslationFile;
+export const parseXliffFile = (
+  content: string | ArrayBuffer,
+  filename: string
+): { document: TranslationFile } => {
+  const format = detectFormat(filename);
+  const doc = parseTranslationFile(content, filename, format);
   return {
-    name: filename.replace(/\.xlf?$/i, ''),
-    document,
+    document: doc,
   };
-}
+};
