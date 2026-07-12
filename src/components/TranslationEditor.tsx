@@ -14,6 +14,8 @@ import {
   Globe,
   AlertCircle,
   Download,
+  ClipboardPaste,
+  Wand2,
 } from 'lucide-react';
 import type { Database } from '@/types/database';
 import type { AISuggestion } from '@/types/xliff';
@@ -461,6 +463,48 @@ export function TranslationEditor({
     }
   }, [autoTranslate.targetLang, autoTranslate.skipExisting, units, sourceLanguage, onSaveAll, onAddToMemory]);
 
+  // === Capture from Chrome page translation ===
+  const readTranslatedText = useCallback((unitId: string): string | null => {
+    const el = document.querySelector<HTMLElement>(`[data-source-id="${unitId}"]`);
+    if (!el) return null;
+    const text = el.textContent?.trim() || '';
+    return text || null;
+  }, []);
+
+  const handleCaptureOne = useCallback(
+    (unitId: string) => {
+      const translated = readTranslatedText(unitId);
+      if (translated) {
+        setEditorState((prev) => ({ ...prev, editedTarget: translated }));
+      }
+    },
+    [readTranslatedText]
+  );
+
+  const captureIntoEdits = useCallback(() => {
+    setBatchEdits((prev) => {
+      const newEdits = new Map(prev);
+      let count = 0;
+      units.forEach((u) => {
+        const translated = readTranslatedText(u.id);
+        if (translated && translated !== u.source) {
+          newEdits.set(u.id, translated);
+          count++;
+        }
+      });
+      if (count > 0) {
+        setCaptureAllNotice(`Captured ${count} translation${count === 1 ? '' : 's'} from page.`);
+      } else {
+        setCaptureAllNotice('No translated text found. Use Chrome\'s "Translate to" feature first, then click Capture All.');
+      }
+      setTimeout(() => setCaptureAllNotice(null), 4000);
+      return newEdits;
+    });
+    return 0;
+  }, [units, readTranslatedText]);
+
+  const [captureAllNotice, setCaptureAllNotice] = useState<string | null>(null);
+
   const filteredUnits = units.filter((unit) => {
     if (filter === 'untranslated') {
       return !unit.target || unit.target.trim() === '' || unit.state === 'new';
@@ -510,6 +554,15 @@ export function TranslationEditor({
               >
                 <X className="w-3 h-3" />
                 Cancel
+              </button>
+              <button
+                onClick={captureIntoEdits}
+                disabled={savingAll}
+                className="px-2.5 py-1 text-xs rounded-full bg-violet-100 text-violet-700 hover:bg-violet-200 dark:bg-violet-900/40 dark:text-violet-300 dark:hover:bg-violet-900/60 transition-colors flex items-center gap-1"
+                title="Read Chrome-translated text from the page and fill all target fields"
+              >
+                <ClipboardPaste className="w-3 h-3" />
+                Capture All
               </button>
               <button
                 onClick={handleSaveAll}
@@ -568,6 +621,17 @@ export function TranslationEditor({
               >
                 <Edit3 className="w-3 h-3" />
                 Batch Edit
+              </button>
+              <button
+                onClick={() => {
+                  handleEnterBatch();
+                  setTimeout(() => captureIntoEdits(), 100);
+                }}
+                className="px-2.5 py-1 text-xs rounded-full bg-violet-100 text-violet-700 hover:bg-violet-200 dark:bg-violet-900/40 dark:text-violet-300 dark:hover:bg-violet-900/60 transition-colors flex items-center gap-1 ml-1"
+                title="Enter batch mode and read Chrome-translated text from the page into all target fields"
+              >
+                <Wand2 className="w-3 h-3" />
+                Capture All
               </button>
               <button
                 onClick={handleOpenAutoTranslate}
@@ -635,6 +699,13 @@ export function TranslationEditor({
         </div>
       )}
 
+      {captureAllNotice && (
+        <div className="px-4 py-2 bg-violet-50 dark:bg-violet-900/20 border-b border-violet-200 dark:border-violet-800 flex items-center gap-2">
+          <ClipboardPaste className="w-4 h-4 text-violet-500 dark:text-violet-400 shrink-0" />
+          <span className="text-xs text-violet-700 dark:text-violet-300">{captureAllNotice}</span>
+        </div>
+      )}
+
       <div className="flex-1 overflow-y-auto">
         {filteredUnits.length === 0 ? (
           <div className="text-center py-12 text-gray-500 dark:text-gray-400">
@@ -697,7 +768,10 @@ export function TranslationEditor({
                           {sourceLanguage.toUpperCase()}
                         </span>
                         <div className="flex-1 flex items-start gap-1">
-                          <div className="flex-1 p-2 bg-gray-100 dark:bg-gray-800 rounded text-sm text-gray-800 dark:text-gray-200">
+                          <div
+                            data-source-id={unit.id}
+                            className="flex-1 p-2 bg-gray-100 dark:bg-gray-800 rounded text-sm text-gray-800 dark:text-gray-200"
+                          >
                             {unit.source}
                           </div>
                           <CopyButton text={unit.source} label="source" />
@@ -763,6 +837,15 @@ export function TranslationEditor({
                           )}
 
                           <div className="flex justify-end gap-2 ml-10">
+                            <button
+                              onClick={() => editorState.editingId && handleCaptureOne(editorState.editingId)}
+                              className="px-3 py-1.5 text-xs text-violet-600 dark:text-violet-400 hover:text-violet-800 dark:hover:text-violet-300 flex items-center gap-1"
+                              disabled={editorState.saving}
+                              title="Read Chrome-translated text from the page into this field"
+                            >
+                              <ClipboardPaste className="w-3 h-3" />
+                              Capture from page
+                            </button>
                             <button
                               onClick={handleCancelEdit}
                               className="px-3 py-1.5 text-xs text-gray-600 dark:text-gray-300 hover:text-gray-800 dark:hover:text-gray-100"
