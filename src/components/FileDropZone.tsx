@@ -126,8 +126,8 @@ export function FileDropZone({ onFileSelect, isLoading }: FileDropZoneProps) {
         relative border-2 border-dashed rounded-xl p-6 text-center transition-all duration-200
         ${
           isDragging
-            ? 'border-sky-500 bg-sky-50'
-            : 'border-gray-300 hover:border-gray-400 bg-white'
+            ? 'border-sky-500 bg-sky-50 dark:bg-sky-900/30'
+            : 'border-gray-300 hover:border-gray-400 bg-white dark:bg-gray-800 dark:border-gray-600 dark:hover:border-gray-500'
         }
         ${isLoading ? 'opacity-50 pointer-events-none' : ''}
       `}
@@ -146,11 +146,11 @@ export function FileDropZone({ onFileSelect, isLoading }: FileDropZoneProps) {
         ) : (
           <div
             className={`w-12 h-12 rounded-full flex items-center justify-center ${
-              isDragging ? 'bg-sky-100' : 'bg-gray-100'
+              isDragging ? 'bg-sky-100 dark:bg-sky-900/50' : 'bg-gray-100 dark:bg-gray-700'
             }`}
           >
             <Upload
-              className={`w-6 h-6 ${isDragging ? 'text-sky-600' : 'text-gray-500'}`}
+              className={`w-6 h-6 ${isDragging ? 'text-sky-600 dark:text-sky-400' : 'text-gray-500 dark:text-gray-400'}`}
             />
           </div>
         )}
@@ -165,14 +165,14 @@ export function FileDropZone({ onFileSelect, isLoading }: FileDropZoneProps) {
         </div>
 
         {error && (
-          <div className="flex items-center gap-2 text-red-600 text-sm mt-2">
+          <div className="flex items-center gap-2 text-red-600 dark:text-red-400 text-sm mt-2">
             <AlertCircle className="w-4 h-4" />
             <span>{error}</span>
           </div>
         )}
       </div>
 
-      <div className="mt-4 flex flex-wrap justify-center gap-2 text-xs text-gray-400">
+      <div className="mt-4 flex flex-wrap justify-center gap-2 text-xs text-gray-400 dark:text-gray-500">
         <span className="flex items-center gap-1">
           <FileText className="w-3 h-3" />
           .xlf / .xliff

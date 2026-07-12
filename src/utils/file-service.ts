@@ -151,6 +151,38 @@ export async function updateTranslationUnit(
   return data as TranslationUnitRow;
 }
 
+export async function batchUpdateTranslationUnits(
+  updates: { id: string; target: string; state: string }[]
+): Promise<void> {
+  if (updates.length === 0) return;
+
+  const now = new Date().toISOString();
+  const { error } = await supabase
+    .from('translation_units')
+    .upsert(
+      updates.map((u) => ({
+        id: u.id,
+        target: u.target,
+        state: u.state,
+        updated_at: now,
+      })) as never,
+      { onConflict: 'id' }
+    );
+
+  if (error) throw error;
+
+  // Update file progress for affected files
+  const { data: affectedFiles } = await supabase
+    .from('translation_units')
+    .select('xliff_file_id')
+    .in('id', updates.map((u) => u.id));
+
+  const fileIds = Array.from(
+    new Set((affectedFiles || []).map((r) => (r as { xliff_file_id: string }).xliff_file_id))
+  );
+  await Promise.all(fileIds.map((fid) => updateFileProgress(fid)));
+}
+
 export async function updateFileProgress(xliffFileId: string): Promise<void> {
   const { data: units, error } = await supabase
     .from('translation_units')

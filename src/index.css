@@ -21,10 +21,22 @@
   background: #9ca3af;
 }
 
+.dark ::-webkit-scrollbar-thumb {
+  background: #374151;
+}
+
+.dark ::-webkit-scrollbar-thumb:hover {
+  background: #4b5563;
+}
+
 /* Smooth transitions */
 * {
   scrollbar-width: thin;
   scrollbar-color: #d1d5db transparent;
+}
+
+.dark * {
+  scrollbar-color: #374151 transparent;
 }
 
 /* Remove focus ring for mouse users */
@@ -65,6 +77,11 @@
   color: #0c4a6e;
 }
 
+.dark ::selection {
+  background-color: #0369a1;
+  color: #e0f2fe;
+}
+
 /* Improved textarea styling */
 textarea {
   font-family: inherit;
@@ -73,6 +90,10 @@ textarea {
 
 textarea::placeholder {
   color: #9ca3af;
+}
+
+.dark textarea::placeholder {
+  color: #6b7280;
 }
 
 /* Code-like text for IDs */

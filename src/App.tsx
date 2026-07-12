@@ -1,5 +1,18 @@
 import { useState, useCallback, useEffect } from 'react';
-import { FileText, Languages, Menu, X, Download, Upload, ArrowLeft, Loader2, ChevronDown, Code } from 'lucide-react';
+import {
+  FileText,
+  Languages,
+  Menu,
+  X,
+  Download,
+  Upload,
+  ArrowLeft,
+  Loader2,
+  ChevronDown,
+  Code,
+  Moon,
+  Sun,
+} from 'lucide-react';
 import { FileDropZone } from '@/components/FileDropZone';
 import { FileList } from '@/components/FileList';
 import { TranslationEditor } from '@/components/TranslationEditor';
@@ -14,6 +27,7 @@ import {
   updateTranslationUnit,
   addToTranslationMemory,
   updateFileProgress,
+  batchUpdateTranslationUnits,
 } from '@/utils/file-service';
 import type { TranslationFileFormat } from '@/types/xliff';
 import { getFormatExtension, getFormatName } from '@/utils/translation-converter';
@@ -43,6 +57,8 @@ interface TranslationUnitRow {
   updated_at: string;
 }
 
+const THEME_STORAGE_KEY = 'translation-editor-theme';
+
 export default function App() {
   const [files, setFiles] = useState<XliffFileInfo[]>([]);
   const [selectedFile, setSelectedFile] = useState<XliffFileInfo | null>(null);
@@ -53,6 +69,29 @@ export default function App() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [exportMenuOpen, setExportMenuOpen] = useState(false);
+  const [darkMode, setDarkMode] = useState(false);
+
+  // Initialize theme from localStorage or system preference
+  useEffect(() => {
+    const stored = localStorage.getItem(THEME_STORAGE_KEY);
+    if (stored === 'dark') {
+      setDarkMode(true);
+    } else if (stored === 'light') {
+      setDarkMode(false);
+    } else if (window.matchMedia('(prefers-color-scheme: dark)').matches) {
+      setDarkMode(true);
+    }
+  }, []);
+
+  // Apply theme to document
+  useEffect(() => {
+    if (darkMode) {
+      document.documentElement.classList.add('dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+    }
+    localStorage.setItem(THEME_STORAGE_KEY, darkMode ? 'dark' : 'light');
+  }, [darkMode]);
 
   useEffect(() => {
     loadFiles();
@@ -62,16 +101,18 @@ export default function App() {
     setLoading(true);
     try {
       const data = await listXliffFiles();
-      setFiles(data.map(f => ({
-        id: f.id,
-        name: f.name,
-        format: f.format,
-        source_language: f.source_language,
-        target_language: f.target_language,
-        unit_count: f.unit_count,
-        translated_count: f.translated_count,
-        updated_at: f.updated_at,
-      })));
+      setFiles(
+        data.map((f) => ({
+          id: f.id,
+          name: f.name,
+          format: f.format,
+          source_language: f.source_language,
+          target_language: f.target_language,
+          unit_count: f.unit_count,
+          translated_count: f.translated_count,
+          updated_at: f.updated_at,
+        }))
+      );
     } catch (err) {
       console.error('Failed to load files:', err);
       setError('Failed to load files');
@@ -170,6 +211,30 @@ export default function App() {
     []
   );
 
+  const refreshFileProgress = useCallback(async (fileId: string) => {
+    try {
+      await updateFileProgress(fileId);
+      const updated = await getXliffFile(fileId);
+      if (updated) {
+        const fileInfo: XliffFileInfo = {
+          id: updated.id,
+          name: updated.name,
+          format: updated.format,
+          source_language: updated.source_language,
+          target_language: updated.target_language,
+          unit_count: updated.unit_count,
+          translated_count: updated.translated_count,
+          updated_at: updated.updated_at,
+        };
+        setSelectedFile(fileInfo);
+        setFiles((prev) => prev.map((f) => (f.id === updated.id ? fileInfo : f)));
+      }
+    } catch (err) {
+      console.error('Failed to refresh progress:', err);
+      // Non-fatal: don't blank the screen
+    }
+  }, []);
+
   const handleUpdateUnit = useCallback(
     async (id: string, target: string, state: string) => {
       await updateTranslationUnit(id, target, state);
@@ -177,27 +242,28 @@ export default function App() {
         prev.map((u) => (u.id === id ? { ...u, target, state } : u))
       );
       if (selectedFile) {
-        await updateFileProgress(selectedFile.id);
-        const updated = await getXliffFile(selectedFile.id);
-        if (updated) {
-          const fileInfo: XliffFileInfo = {
-            id: updated.id,
-            name: updated.name,
-            format: updated.format,
-            source_language: updated.source_language,
-            target_language: updated.target_language,
-            unit_count: updated.unit_count,
-            translated_count: updated.translated_count,
-            updated_at: updated.updated_at,
-          };
-          setSelectedFile(fileInfo);
-          setFiles((prev) =>
-            prev.map((f) => (f.id === updated.id ? fileInfo : f))
-          );
-        }
+        // Fire-and-forget: refresh progress without blocking the UI
+        refreshFileProgress(selectedFile.id);
       }
     },
-    [selectedFile]
+    [selectedFile, refreshFileProgress]
+  );
+
+  const handleSaveAll = useCallback(
+    async (updates: { id: string; target: string; state: string }[]) => {
+      await batchUpdateTranslationUnits(updates);
+      setTranslationUnits((prev) => {
+        const updateMap = new Map(updates.map((u) => [u.id, u]));
+        return prev.map((u) => {
+          const upd = updateMap.get(u.id);
+          return upd ? { ...u, target: upd.target, state: upd.state } : u;
+        });
+      });
+      if (selectedFile) {
+        await refreshFileProgress(selectedFile.id);
+      }
+    },
+    [selectedFile, refreshFileProgress]
   );
 
   const handleAddToMemory = useCallback(
@@ -226,9 +292,7 @@ export default function App() {
     ? {
         percent:
           selectedFile.unit_count > 0
-            ? Math.round(
-                (selectedFile.translated_count / selectedFile.unit_count) * 100
-              )
+            ? Math.round((selectedFile.translated_count / selectedFile.unit_count) * 100)
             : 0,
         translated: selectedFile.translated_count,
         total: selectedFile.unit_count,
@@ -238,32 +302,33 @@ export default function App() {
   const exportFormats: TranslationFileFormat[] = ['xliff', 'po', 'mo'];
 
   return (
-    <div className="h-screen flex bg-gray-50">
+    <div className="h-screen flex bg-gray-50 dark:bg-gray-950 transition-colors">
       {/* Sidebar */}
       <aside
         className={`
-          ${
-            sidebarOpen ? 'w-80' : 'w-16'
-          } transition-all duration-300 flex flex-col bg-white border-r border-gray-200 shrink-0
+          ${sidebarOpen ? 'w-80' : 'w-16'}
+          transition-all duration-300 flex flex-col bg-white dark:bg-gray-900 border-r border-gray-200 dark:border-gray-800 shrink-0
         `}
       >
-        <div className="flex items-center justify-between px-4 h-14 border-b border-gray-200">
+        <div className="flex items-center justify-between px-4 h-14 border-b border-gray-200 dark:border-gray-800">
           {sidebarOpen && (
             <div className="flex items-center gap-2">
               <div className="w-8 h-8 bg-gradient-to-br from-sky-500 to-emerald-500 rounded-lg flex items-center justify-center">
                 <Languages className="w-4 h-4 text-white" />
               </div>
-              <span className="font-semibold text-gray-900">Translation Editor</span>
+              <span className="font-semibold text-gray-900 dark:text-gray-100">
+                Translation Editor
+              </span>
             </div>
           )}
           <button
             onClick={() => setSidebarOpen(!sidebarOpen)}
-            className="p-1.5 hover:bg-gray-100 rounded"
+            className="p-1.5 hover:bg-gray-100 dark:hover:bg-gray-800 rounded"
           >
             {sidebarOpen ? (
-              <X className="w-4 h-4 text-gray-500" />
+              <X className="w-4 h-4 text-gray-500 dark:text-gray-400" />
             ) : (
-              <Menu className="w-4 h-4 text-gray-500" />
+              <Menu className="w-4 h-4 text-gray-500 dark:text-gray-400" />
             )}
           </button>
         </div>
@@ -276,7 +341,7 @@ export default function App() {
 
             {loading && files.length === 0 ? (
               <div className="flex items-center justify-center py-8">
-                <Loader2 className="w-6 h-6 animate-spin text-gray-400" />
+                <Loader2 className="w-6 h-6 animate-spin text-gray-400 dark:text-gray-500" />
               </div>
             ) : (
               <FileList
@@ -295,32 +360,34 @@ export default function App() {
       {/* Main content */}
       <main className="flex-1 flex flex-col overflow-hidden">
         {/* Header */}
-        <header className="h-14 border-b border-gray-200 bg-white flex items-center justify-between px-4 shrink-0">
+        <header className="h-14 border-b border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 flex items-center justify-between px-4 shrink-0">
           {selectedFile ? (
             <>
               <div className="flex items-center gap-3">
                 <button
                   onClick={handleBack}
-                  className="p-1.5 hover:bg-gray-100 rounded"
+                  className="p-1.5 hover:bg-gray-100 dark:hover:bg-gray-800 rounded"
                 >
-                  <ArrowLeft className="w-4 h-4 text-gray-500" />
+                  <ArrowLeft className="w-4 h-4 text-gray-500 dark:text-gray-400" />
                 </button>
                 <div>
                   <div className="flex items-center gap-2">
-                    <h1 className="font-medium text-gray-900 text-sm">
+                    <h1 className="font-medium text-gray-900 dark:text-gray-100 text-sm">
                       {selectedFile.name}
                     </h1>
-                    <span className={`text-xs px-1.5 py-0.5 rounded border ${
-                      selectedFile.format === 'po' || selectedFile.format === 'pot'
-                        ? 'bg-purple-100 text-purple-700 border-purple-200'
-                        : selectedFile.format === 'mo'
-                        ? 'bg-orange-100 text-orange-700 border-orange-200'
-                        : 'bg-sky-100 text-sky-700 border-sky-200'
-                    }`}>
+                    <span
+                      className={`text-xs px-1.5 py-0.5 rounded border ${
+                        selectedFile.format === 'po' || selectedFile.format === 'pot'
+                          ? 'bg-purple-100 text-purple-700 border-purple-200 dark:bg-purple-900/40 dark:text-purple-300 dark:border-purple-700'
+                          : selectedFile.format === 'mo'
+                            ? 'bg-orange-100 text-orange-700 border-orange-200 dark:bg-orange-900/40 dark:text-orange-300 dark:border-orange-700'
+                            : 'bg-sky-100 text-sky-700 border-sky-200 dark:bg-sky-900/40 dark:text-sky-300 dark:border-sky-700'
+                      }`}
+                    >
                       {selectedFile.format.toUpperCase()}
                     </span>
                   </div>
-                  <div className="flex items-center gap-2 text-xs text-gray-500">
+                  <div className="flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
                     <span>
                       {selectedFile.source_language.toUpperCase()} →{' '}
                       {selectedFile.target_language.toUpperCase()}
@@ -334,57 +401,79 @@ export default function App() {
                   </div>
                 </div>
               </div>
-              <div className="relative">
+              <div className="flex items-center gap-2">
                 <button
-                  onClick={() => setExportMenuOpen(!exportMenuOpen)}
-                  disabled={exporting !== null}
-                  className="flex items-center gap-2 px-4 py-2 bg-sky-600 text-white text-sm rounded-lg hover:bg-sky-700 disabled:opacity-50"
+                  onClick={() => setDarkMode(!darkMode)}
+                  className="p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg text-gray-500 dark:text-gray-400 transition-colors"
+                  title={darkMode ? 'Switch to light mode' : 'Switch to dark mode'}
                 >
-                  {exporting ? (
-                    <Loader2 className="w-4 h-4 animate-spin" />
+                  {darkMode ? (
+                    <Sun className="w-4 h-4" />
                   ) : (
-                    <Download className="w-4 h-4" />
+                    <Moon className="w-4 h-4" />
                   )}
-                  Export
-                  <ChevronDown className="w-3 h-3" />
                 </button>
-                {exportMenuOpen && (
-                  <div className="absolute right-0 top-full mt-1 bg-white border border-gray-200 rounded-lg shadow-lg py-1 z-10 min-w-[160px]">
-                    {exportFormats.map((fmt) => (
-                      <button
-                        key={fmt}
-                        onClick={() => {
-                          handleExport(selectedFile.id, fmt);
-                          setExportMenuOpen(false);
-                        }}
-                        className="w-full px-3 py-2 text-left text-sm hover:bg-gray-50 flex items-center gap-2"
-                      >
-                        <Code className="w-4 h-4 text-gray-400" />
-                        <span>{getFormatName(fmt)}</span>
-                        <span className="text-xs text-gray-400 ml-auto">
-                          {getFormatExtension(fmt)}
-                        </span>
-                      </button>
-                    ))}
-                  </div>
-                )}
+                <div className="relative">
+                  <button
+                    onClick={() => setExportMenuOpen(!exportMenuOpen)}
+                    disabled={exporting !== null}
+                    className="flex items-center gap-2 px-4 py-2 bg-sky-600 text-white text-sm rounded-lg hover:bg-sky-700 disabled:opacity-50"
+                  >
+                    {exporting ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <Download className="w-4 h-4" />
+                    )}
+                    Export
+                    <ChevronDown className="w-3 h-3" />
+                  </button>
+                  {exportMenuOpen && (
+                    <div className="absolute right-0 top-full mt-1 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg py-1 z-10 min-w-[160px]">
+                      {exportFormats.map((fmt) => (
+                        <button
+                          key={fmt}
+                          onClick={() => {
+                            handleExport(selectedFile.id, fmt);
+                            setExportMenuOpen(false);
+                          }}
+                          className="w-full px-3 py-2 text-left text-sm hover:bg-gray-50 dark:hover:bg-gray-700 flex items-center gap-2 text-gray-700 dark:text-gray-200"
+                        >
+                          <Code className="w-4 h-4 text-gray-400 dark:text-gray-500" />
+                          <span>{getFormatName(fmt)}</span>
+                          <span className="text-xs text-gray-400 dark:text-gray-500 ml-auto">
+                            {getFormatExtension(fmt)}
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
               </div>
             </>
           ) : (
-            <div className="flex items-center gap-2 text-gray-500">
-              <FileText className="w-4 h-4" />
-              <span className="text-sm">Select a file to view translations</span>
+            <div className="flex items-center justify-between w-full">
+              <div className="flex items-center gap-2 text-gray-500 dark:text-gray-400">
+                <FileText className="w-4 h-4" />
+                <span className="text-sm">Select a file to view translations</span>
+              </div>
+              <button
+                onClick={() => setDarkMode(!darkMode)}
+                className="p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg text-gray-500 dark:text-gray-400 transition-colors"
+                title={darkMode ? 'Switch to light mode' : 'Switch to dark mode'}
+              >
+                {darkMode ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
+              </button>
             </div>
           )}
         </header>
 
         {/* Error banner */}
         {error && (
-          <div className="bg-red-50 border-b border-red-200 px-4 py-2 flex items-center justify-between">
-            <span className="text-sm text-red-600">{error}</span>
+          <div className="bg-red-50 dark:bg-red-900/30 border-b border-red-200 dark:border-red-800 px-4 py-2 flex items-center justify-between">
+            <span className="text-sm text-red-600 dark:text-red-400">{error}</span>
             <button
               onClick={() => setError(null)}
-              className="text-red-600 hover:text-red-800"
+              className="text-red-600 dark:text-red-400 hover:text-red-800 dark:hover:text-red-300"
             >
               <X className="w-4 h-4" />
             </button>
@@ -400,24 +489,26 @@ export default function App() {
               targetLanguage={selectedFile.target_language}
               onUpdateUnit={handleUpdateUnit}
               onAddToMemory={handleAddToMemory}
+              onSaveAll={handleSaveAll}
             />
           ) : selectedFile && loading ? (
             <div className="flex items-center justify-center h-full">
-              <Loader2 className="w-8 h-8 animate-spin text-gray-400" />
+              <Loader2 className="w-8 h-8 animate-spin text-gray-400 dark:text-gray-500" />
             </div>
           ) : (
-            <div className="h-full flex flex-col items-center justify-center text-gray-500">
-              <div className="w-20 h-20 bg-gradient-to-br from-sky-100 to-emerald-100 rounded-2xl flex items-center justify-center mb-4">
-                <Languages className="w-10 h-10 text-sky-500" />
+            <div className="h-full flex flex-col items-center justify-center text-gray-500 dark:text-gray-400">
+              <div className="w-20 h-20 bg-gradient-to-br from-sky-100 to-emerald-100 dark:from-sky-900/40 dark:to-emerald-900/40 rounded-2xl flex items-center justify-center mb-4">
+                <Languages className="w-10 h-10 text-sky-500 dark:text-sky-400" />
               </div>
-              <h2 className="text-lg font-medium text-gray-700 mb-2">
+              <h2 className="text-lg font-medium text-gray-700 dark:text-gray-200 mb-2">
                 Translation File Editor
               </h2>
-              <p className="text-sm text-gray-500 text-center max-w-md px-4">
-                Import translation files (XLIFF, PO/POT, or MO) to translate content with AI-powered suggestions.
-                Your translations are saved automatically and can be exported to any format.
+              <p className="text-sm text-gray-500 dark:text-gray-400 text-center max-w-md px-4">
+                Import translation files (XLIFF, PO/POT, or MO) to translate content with
+                AI-powered suggestions. Your translations are saved automatically and can be
+                exported to any format.
               </p>
-              <div className="flex flex-wrap items-center justify-center gap-4 mt-6 text-xs text-gray-400">
+              <div className="flex flex-wrap items-center justify-center gap-4 mt-6 text-xs text-gray-400 dark:text-gray-500">
                 <span className="flex items-center gap-1">
                   <Upload className="w-4 h-4" />
                   Import
@@ -431,12 +522,12 @@ export default function App() {
                   Multiple Formats
                 </span>
               </div>
-              <div className="flex flex-wrap justify-center gap-2 mt-4 text-xs text-gray-300">
-                <span className="px-2 py-1 bg-gray-100 rounded">.xlf</span>
-                <span className="px-2 py-1 bg-gray-100 rounded">.xliff</span>
-                <span className="px-2 py-1 bg-gray-100 rounded">.po</span>
-                <span className="px-2 py-1 bg-gray-100 rounded">.pot</span>
-                <span className="px-2 py-1 bg-gray-100 rounded">.mo</span>
+              <div className="flex flex-wrap justify-center gap-2 mt-4 text-xs text-gray-400 dark:text-gray-600">
+                <span className="px-2 py-1 bg-gray-100 dark:bg-gray-800 rounded">.xlf</span>
+                <span className="px-2 py-1 bg-gray-100 dark:bg-gray-800 rounded">.xliff</span>
+                <span className="px-2 py-1 bg-gray-100 dark:bg-gray-800 rounded">.po</span>
+                <span className="px-2 py-1 bg-gray-100 dark:bg-gray-800 rounded">.pot</span>
+                <span className="px-2 py-1 bg-gray-100 dark:bg-gray-800 rounded">.mo</span>
               </div>
             </div>
           )}
